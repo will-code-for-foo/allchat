@@ -2,14 +2,21 @@
   "name": "ig-comment-bot",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
-  "description": "Odpowiada na komentarze pod postem na Instagramie, lajkuje je i wysyła przepis w DM (oficjalne API Meta).",
+  "description": "Odpowiada na komentarze pod postem na Instagramie, lajkuje je i wysyła przepis w DM (oficjalne API Meta). Dwie wersje wejściowe nad wspólnym kodem: Node 20.12+ (bot.mjs) i Node 10.17+ (node10/bot.js).",
   "engines": { "node": ">=20.12" },
   "scripts": {
     "setup": "node setup.mjs",
     "media": "node bot.mjs --list",
     "dry": "node bot.mjs --dry-run",
     "start": "node bot.mjs",
-    "test": "node --test test/e2e.test.mjs"
+    "setup:node10": "node node10/setup.js",
+    "media:node10": "node node10/bot.js --list",
+    "dry:node10": "node node10/bot.js --dry-run",
+    "start:node10": "node node10/bot.js",
+    "test": "node --test test/e2e.test.mjs",
+    "test:node10": "BOT_ENTRY=node10/bot.js node --test test/e2e.test.mjs",
+    "test:oldapi": "BOT_ENTRY=node10/bot.js OLD_API=1 node --test test/e2e.test.mjs",
+    "test:all": "npm test && npm run test:node10 && npm run test:oldapi",
+    "lint:node10": "node test/check-syntax.js"
   }
 }

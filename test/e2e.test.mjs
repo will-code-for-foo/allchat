@@ -1,4 +1,9 @@
 // End-to-end test against a fake Graph API: no network, no Instagram account needed.
+// One suite for every edition of the bot (they share lib/bot-core.js, only the entry point differs):
+//   npm test                 bot.mjs        (Node 20.12+, fetch)
+//   npm run test:node10      node10/bot.js  (Node 10 edition, https.request), here still run by the same Node as the tests
+//   npm run test:oldapi      node10/bot.js with test/old-node-shim.js: every API Node 10 lacks is taken away
+//   BOT_ENTRY=node10/bot.js BOT_NODE=/path/to/node10/bin/node npm run test:node10     on a REAL Node 10
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -9,7 +14,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bot.mjs');
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ENTRY = process.env.BOT_ENTRY || 'bot.mjs';
+const BOT = path.join(TEST_DIR, '..', ENTRY);
+// The bot is started in a child process. By default with the same Node that runs the tests; BOT_NODE=/path/to/node10
+// runs the BOT (not the test runner, which needs Node 18+) on another interpreter, e.g. a real Node 10.
+const NODE_BIN = process.env.BOT_NODE || process.execPath;
+// OLD_API=1: the bot runs with old-node-shim.js preloaded, which removes every API Node 10 does not have (fetch,
+// Array.prototype.flat/at, String.prototype.replaceAll, node: imports, ...), so a stray modern call fails loudly.
+// Only meaningful for the Node 10 entry (bot.mjs uses fetch on purpose).
+if (process.env.OLD_API && ENTRY === 'bot.mjs') throw new Error('OLD_API=1 needs BOT_ENTRY=node10/bot.js (bot.mjs uses fetch)');
+const NODE_ARGS = process.env.OLD_API ? ['-r', path.join(TEST_DIR, 'old-node-shim.js')] : [];
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 const H = 3600e3;
 
@@ -96,6 +111,13 @@ function startFakeGraph(behaviour = {}) {
     }
     if (behaviour.dropFirstDm && p === 'IG1/messages' && !dropped) { dropped = true; req.socket.destroy(); return; } // connection dies mid-request
     calls.push({ method: req.method, path: p, body, t: Date.now() });
+    if (behaviour.cutDmBody && p === 'IG1/messages') {
+      // Instagram accepted the DM (200) but the connection dies in the middle of the body
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': 200 });
+      res.write('{"recipient_id":"x"');
+      setTimeout(() => req.socket.destroy(), 20);
+      return;
+    }
     if (behaviour.hangReply && p.endsWith('/replies')) return; // never answers: the request stays in flight
     const err = behaviour[p];
     if (err) return reply(400, { error: err });
@@ -121,7 +143,7 @@ function botEnv(port, dir, envOverride = {}) {
 }
 
 async function runBot({ port, dir, extraArgs = [], envOverride = {} }) {
-  const child = spawn(process.execPath, [BOT, '--once', ...extraArgs], { env: botEnv(port, dir, envOverride) });
+  const child = spawn(NODE_BIN, [...NODE_ARGS, BOT, '--once', ...extraArgs], { env: botEnv(port, dir, envOverride) });
   let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
   const code = await new Promise((r) => child.on('close', r));
   return { code, out };
@@ -171,12 +193,15 @@ test('a dropped connection does not crash the bot: it waits, retries and loses n
   const { server, calls, port } = await startFakeGraph({ dropFirstDm: true });
   const dir = await setupDir();
   await writeConfig(dir, { delaySeconds: [0, 0], pollSeconds: 1, networkRetrySeconds: 0.2 });
-  const child = spawn(process.execPath, [BOT], { env: botEnv(port, dir) }); // no --once: the real long-running loop
+  const child = spawn(NODE_BIN, [...NODE_ARGS, BOT], { env: botEnv(port, dir) }); // no --once: the real long-running loop
   let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
   let exitCode = null; child.on('close', (c) => { exitCode = c; });
   try {
     const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline && exitCode === null && !calls.some((c) => c.path === 'c3/replies')) await sleep(100);
+    // wait for the bot to FINISH the round ("połączenie wróciło" is logged at its end), not merely for the fake server to
+    // receive the last request: asserting on the log a few ms after that request raced with the bot's own logging
+    while (Date.now() < deadline && exitCode === null
+      && !(calls.some((c) => c.path === 'c3/replies') && /połączenie wróciło/.test(out))) await sleep(100);
     assert.equal(exitCode, null, `the bot must keep running, but it exited with ${exitCode}:\n${out}`);
     assert.match(out, /brak połączenia z Instagramem/);
     assert.match(out, /połączenie wróciło/);
@@ -186,11 +211,26 @@ test('a dropped connection does not crash the bot: it waits, retries and loses n
   } finally { child.kill('SIGTERM'); server.close(); }
 });
 
+test('a 200 whose body is cut off is still a success: the DM is never sent twice', async () => {
+  const { server, calls, port } = await startFakeGraph({ cutDmBody: true });
+  const dir = await setupDir();
+  try {
+    const run = await runBot({ port, dir });
+    assert.equal(run.code, 0, run.out);
+    assert.deepEqual(calls.filter((c) => c.path === 'IG1/messages').map((c) => c.body.recipient.comment_id), ['c1', 'c3'],
+      'exactly one DM each: Instagram said 200, so a lost body must not look like a network error and trigger a resend');
+    const state = JSON.parse(await readFile(path.join(dir, 'state.json'), 'utf8'));
+    assert.equal(state.comments.c1.dm, 'ok');
+    assert.equal(state.comments.c3.dm, 'ok');
+    assert.doesNotMatch(run.out, /brak połączenia/);
+  } finally { server.close(); }
+});
+
 test('idle polling is cheap: the comment list is read once, then only a count check; a new comment triggers one refresh', async () => {
   const { server, gets, port } = await startFakeGraph({ bumpCountAtCheck: 4 });
   const dir = await setupDir();
   await writeConfig(dir, { delaySeconds: [0, 0], pollSeconds: 0.3 });
-  const child = spawn(process.execPath, [BOT], { env: botEnv(port, dir) });
+  const child = spawn(NODE_BIN, [...NODE_ARGS, BOT], { env: botEnv(port, dir) });
   let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
   let exitCode = null; child.on('close', (c) => { exitCode = c; });
   try {
@@ -212,7 +252,7 @@ test('routine polls on a big post read only the newest pages, and still catch a 
   const dir = await setupDir();
   // start from user100 -> 101 comments to handle in the first (complete) read of 5 pages
   await writeConfig(dir, { startFromUsername: 'user100', delaySeconds: [0, 0], pollSeconds: 0.3 });
-  const child = spawn(process.execPath, [BOT], { env: botEnv(port, dir) });
+  const child = spawn(NODE_BIN, [...NODE_ARGS, BOT], { env: botEnv(port, dir) });
   let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
   let exitCode = null; child.on('close', (c) => { exitCode = c; });
   try {
@@ -368,7 +408,7 @@ test('a DM is saved the moment it is sent: killing the bot while the reply is st
   const { server, calls, port } = await startFakeGraph({ hangReply: true });
   const dir = await setupDir();
   await writeConfig(dir, { delaySeconds: [0, 0] });
-  const child = spawn(process.execPath, [BOT], { env: botEnv(port, dir) });
+  const child = spawn(NODE_BIN, [...NODE_ARGS, BOT], { env: botEnv(port, dir) });
   try {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline && !calls.some((c) => c.path === 'c1/replies')) await sleep(50);
@@ -436,7 +476,7 @@ test('while idle the bot says it is still there', async () => {
   const { server, port } = await startFakeGraph();
   const dir = await setupDir();
   await writeConfig(dir, { delaySeconds: [0, 0], pollSeconds: 0.2, heartbeatSeconds: 0.5 });
-  const child = spawn(process.execPath, [BOT], { env: botEnv(port, dir) });
+  const child = spawn(NODE_BIN, [...NODE_ARGS, BOT], { env: botEnv(port, dir) });
   let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
   try {
     const deadline = Date.now() + 15_000;
