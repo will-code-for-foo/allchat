@@ -7,7 +7,39 @@ Pod wskazanym postem/reelsem dla każdego nowego komentarza:
 
 Działa lokalnie, na oficjalnym API Meta (tym samym, z którego korzysta ManyChat). Co minutę sam pyta
 Instagram o nowe komentarze, więc **nie potrzebujesz ngroka, publicznego adresu ani webhooków**. Nie wymaga
-żadnych zależności – tylko Node 20.12+. Bez strony na Facebooku (lajkowanie komentarzy: dodatek B).
+żadnych zależności – Node 20.12+ (albo 10.17+, patrz niżej). Bez strony na Facebooku (lajkowanie komentarzy: dodatek B).
+
+## Dwie wersje: Node 20.12+ i Node 10.17+
+
+Logika bota jest jedna (`lib/bot-core.js`, napisana tak, żeby działała na obu wersjach Node). Pliki wejściowe różnią
+się tylko tym, czego brakuje starym wersjom Node (`fetch` i `process.loadEnvFile`):
+
+| | Node 20.12+ (komputer) | Node 10.17+ (np. stary telefon z Kali) |
+|---|---|---|
+| bot | `npm start` (= `node bot.mjs`) | `npm run start:node10` (= `node node10/bot.js`) |
+| lista postów, próba | `npm run media`, `npm run dry` | `npm run media:node10`, `npm run dry:node10` |
+| jednorazowe ustawienie tokenu | `npm run setup` | `npm run setup:node10` |
+
+**Obie wersje używają tych samych plików z głównego katalogu**: `.env`, `config*.json`, `recipe*.txt`, `state*.json`
+i `logs/`. Możesz więc bez zmian przełączać się między nimi albo skopiować katalog na telefon. Argumenty są te same
+(`--dry-run`, `--once`, `--debug`, `--account=...`); przy `npm run ...:node10` dodaj `--` przed argumentami.
+
+**Na telefonie (Node 10):**
+- Skopiuj cały katalog (z `lib/` i `node10/`) i sprawdź `node -v` (≥ 10.17). `npm` nie jest potrzebny:
+  `node node10/bot.js --dry-run`.
+- Jeśli kampania już trwa, skopiuj też `state.<konto>.json`. Bez niego bot uzna wszystkie komentarze za nowe i wyśle
+  DM-y ponownie. **Nie uruchamiaj dwóch kopii** (komputer i telefon) na tym samym koncie i poście.
+- Node 10 ufa tylko własnej, starej liście certyfikatów (2019). Przy błędzie certyfikatu
+  (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `CERT_...`) uruchom:
+  `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt node node10/bot.js`
+- Node 10 jest bez wsparcia od 2021 r. Bot tylko odpytuje API Meta i nie przyjmuje żadnych połączeń z zewnątrz.
+
+**Dla piszących kod:** wszystko w `lib/*.js` i `node10/*.js` musi mieścić się w ES2018 (bez `?.`, `??`, `replaceAll`,
+`.at()`, `flatMap`, `fetch`, importów `node:...`). Nowoczesne API wolno tylko w plikach `.mjs`. Wspólny kod nie jest
+też ES modułem, dlatego w `package.json` nie ma `"type": "module"`. Podział: `lib/util.js` (drobne funkcje),
+`lib/errors.js` (`GraphError`, `NetworkError`), `lib/bot-core.js` i `lib/setup-core.js` (logika),
+`lib/transport.js` i `lib/env.js` (zamienniki `fetch` i `process.loadEnvFile` dla Node 10),
+`lib/fetch-transport.mjs` (`fetch` dla nowego Node).
 
 ## Konfiguracja (jednorazowo)
 
@@ -177,4 +209,16 @@ Token daje dostęp do wiadomości prywatnych tego konta, więc `.env` trzymaj ty
 wymaga App Review w Meta.
 
 ## Testy
-`npm test` – uruchamia bota na atrapie API Meta (bez konta i internetu).
+Jeden zestaw testów uruchamia bota na atrapie API Meta (bez konta i internetu), na wybranym pliku wejściowym.
+Sam uruchamiacz (`node --test`) wymaga Node 18+, więc testy odpalasz na komputerze, nie na telefonie:
+
+```bash
+npm test                 # bot.mjs (Node 20.12+, fetch)
+npm run test:node10      # node10/bot.js (https zamiast fetch)
+npm run test:oldapi      # j.w., ale bot dostaje "shim" odbierający API, których nie ma w Node 10 (fetch, flat, at, node:...)
+npm run test:all         # wszystkie trzy po kolei
+# bot na PRAWDZIWYM Node 10 (uruchamiacz testów zostaje na nowym Node):
+BOT_NODE=/ścieżka/do/node10/bin/node npm run test:node10
+# czy kod dla Node 10 nie wychodzi poza ES2018 (wymaga parsera acorn, który nie jest zależnością bota):
+ACORN=/ścieżka/do/node_modules/acorn npm run lint:node10
+```
