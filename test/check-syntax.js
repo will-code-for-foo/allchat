@@ -18,13 +18,14 @@ const PROPS = ['replaceAll', 'flat', 'flatMap', 'at', 'findLast', 'findLastIndex
 const GLOBALS = ['fetch', 'AbortSignal', 'AbortController', 'structuredClone', 'queueMicrotask', 'globalThis', 'Headers', 'Request', 'Response'];
 const MODULE_RE = /^(node:|fs\/promises$|timers\/promises$|readline\/promises$|stream\/promises$|util\/types$)/;
 
-// Everything Node 10 has to run: the shared code in lib/*.js and the entry points in node10/*.js. The modern entry
+// Everything Node 10 has to run: the shared code in lib/*.js, the entry points in node10/*.js and run_allchat.js. The modern entry
 // points (bot.mjs, setup.mjs, lib/fetch-transport.mjs) use fetch and ?. on purpose and are not checked here.
 const root = path.join(__dirname, '..');
 const files = [];
 ['lib', 'node10'].forEach((dir) => {
   fs.readdirSync(path.join(root, dir)).filter((f) => /\.js$/.test(f)).sort().forEach((f) => files.push(`${dir}/${f}`));
 });
+files.push('run_allchat.js'); // launcher with the gpg-encrypted token, runs on Node 10 too
 let problems = 0;
 
 files.forEach((file) => {

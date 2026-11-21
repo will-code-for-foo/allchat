@@ -20,3 +20,5 @@ node_modules/
 *.bak
 allchat*
 *.gpg
+
+media_ids.txt

@@ -32,6 +32,10 @@ i `logs/`. Możesz więc bez zmian przełączać się między nimi albo skopiowa
 - Node 10 ufa tylko własnej, starej liście certyfikatów (2019). Przy błędzie certyfikatu
   (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `CERT_...`) uruchom:
   `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt node node10/bot.js`
+- Token bez `.env` na dysku: zaszyfruj go (`gpg --symmetric --cipher-algo AES256 --output .env.gpg .env`), trzymaj
+  `.env.gpg` w `../allchat-token/` (albo wskaż plik przez `ALLCHAT_TOKEN_FILE=`) i uruchamiaj
+  `node run_allchat --dry-run --account=...`. gpg pyta o hasło, a odszyfrowany token trafia tylko do pamięci bota.
+  Jeśli gpg nie pokaże pytania o hasło, uruchom wcześniej `export GPG_TTY=$(tty)`. Usuń wtedy zwykły `.env` z telefonu.
 - Node 10 jest bez wsparcia od 2021 r. Bot tylko odpytuje API Meta i nie przyjmuje żadnych połączeń z zewnątrz.
 
 **Dla piszących kod:** wszystko w `lib/*.js` i `node10/*.js` musi mieścić się w ES2018 (bez `?.`, `??`, `replaceAll`,

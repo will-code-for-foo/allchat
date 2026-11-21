@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -524,6 +524,73 @@ test('--dry-run sends nothing and writes no state', async () => {
     assert.equal(calls.length, 0);
     assert.match(run.out, /\[dry-run\] dm -> @alice/);
     await assert.rejects(readFile(path.join(dir, 'state.json')));
+  } finally { server.close(); }
+});
+
+// run_allchat.js: the token lives in a gpg-encrypted file and goes straight into the bot's environment. gpg is faked
+// here by a shell script on PATH (it prints its arguments to a file and either "decrypts" or fails).
+async function fakeGpg(dir, body) {
+  const bin = path.join(dir, 'bin');
+  await mkdir(bin);
+  await writeFile(path.join(bin, 'gpg'), `#!/bin/sh\necho "$@" > "${dir}/gpg-args"\n${body}\n`, { mode: 0o755 });
+  await writeFile(path.join(dir, 'token.env.gpg'), 'not really encrypted');
+  return bin;
+}
+async function runLauncher({ port, dir, bin, extraArgs = [] }) {
+  const env = botEnv(port, dir, { PAGE_TOKEN: null, IG_USER_ID: null, PATH: `${bin}:${process.env.PATH}`, ALLCHAT_TOKEN_FILE: path.join(dir, 'token.env.gpg') });
+  const child = spawn(NODE_BIN, [...NODE_ARGS, path.join(TEST_DIR, '..', 'run_allchat.js'), '--once', ...extraArgs], { env });
+  let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
+  const code = await new Promise((r) => child.on('close', r));
+  return { code, out };
+}
+
+test('run_allchat.js: the token comes from gpg into memory only (the fake Graph accepts only that token), then the bot runs normally', async () => {
+  const { server, calls, port } = await startFakeGraph();
+  const dir = await setupDir();
+  const bin = await fakeGpg(dir, `printf 'META_TOKEN=tok\\nIG_USER_ID=IG1\\n'`);
+  try {
+    const run = await runLauncher({ port, dir, bin, extraArgs: ['--dry-run'] });
+    assert.equal(run.code, 0, run.out);
+    assert.match(run.out, /\[dry-run\] dm -> @alice/);
+    assert.equal(calls.length, 0, 'dry run still sends nothing');
+    assert.match(await readFile(path.join(dir, 'gpg-args'), 'utf8'), /--decrypt .*token\.env\.gpg/);
+    assert.ok(!(await readdir(dir)).includes('.env'), 'no plaintext .env appears anywhere');
+  } finally { server.close(); }
+});
+
+test('run_allchat.js: a failed decryption stops before the bot starts, with a clear message', async () => {
+  const { server, calls, port } = await startFakeGraph();
+  const dir = await setupDir();
+  const bin = await fakeGpg(dir, 'exit 2');
+  try {
+    const run = await runLauncher({ port, dir, bin });
+    assert.equal(run.code, 1, run.out);
+    assert.match(run.out, /gpg nie odszyfrował pliku/);
+    assert.equal(calls.length, 0);
+  } finally { server.close(); }
+});
+
+test('run_allchat.js: a missing token file, a missing gpg and an empty result are explained, not a stack trace', async () => {
+  const { server, calls, port } = await startFakeGraph();
+  const dir = await setupDir();
+  const bin = await fakeGpg(dir, 'exit 0'); // "decrypts" to nothing
+  const launch = async (env) => {
+    const child = spawn(NODE_BIN, [...NODE_ARGS, path.join(TEST_DIR, '..', 'run_allchat.js')], { env: botEnv(port, dir, env) });
+    let out = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
+    return { code: await new Promise((r) => child.on('close', r)), out };
+  };
+  try {
+    const empty = await runLauncher({ port, dir, bin });
+    assert.equal(empty.code, 1, empty.out);
+    assert.match(empty.out, /pusty/);
+    const missing = await launch({ PATH: `${bin}:${process.env.PATH}`, ALLCHAT_TOKEN_FILE: path.join(dir, 'missing.gpg') });
+    assert.equal(missing.code, 1, missing.out);
+    assert.match(missing.out, /nie ma pliku z tokenem/);
+    const noGpg = await launch({ PATH: path.dirname(NODE_BIN), ALLCHAT_TOKEN_FILE: path.join(dir, 'token.env.gpg') });
+    assert.equal(noGpg.code, 1, noGpg.out);
+    assert.match(noGpg.out, /nie znaleziono polecenia gpg/);
+    for (const r of [empty, missing, noGpg]) assert.doesNotMatch(r.out, /\bat .*\.js:\d+|Error:/);
+    assert.equal(calls.length, 0);
   } finally { server.close(); }
 });
 
