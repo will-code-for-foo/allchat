@@ -1,0 +1,1 @@
+TU WKLEJ treść wiadomości, którą dostanie każdy komentujący (maksymalnie 1000 bajtów; polskie znaki liczą się podwójnie).

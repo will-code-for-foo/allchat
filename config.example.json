@@ -1,0 +1,18 @@
+{
+  "mediaId": "",
+  "startFromUsername": "",
+  "pollSeconds": 60,
+  "delaySeconds": [150, 190],
+  "likeComments": false,
+  "skipIfLikedAtLeast": 0,
+  "publicReply": true,
+  "oneDmPerUser": true,
+  "triggerRegex": "",
+  "replies": [
+    "@{username} wysłane, sprawdź DM 💌",
+    "@{username} przepis już leci, zajrzyj do wiadomości 🎃",
+    "@{username} wysłałem, sprawdź DM 🧡",
+    "@{username} gotowe! Przepis czeka w DM 🍰"
+  ],
+  "recipeFile": "recipe.txt"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "ig-comment-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Odpowiada na komentarze pod postem na Instagramie, lajkuje je i wysyła przepis w DM (oficjalne API Meta).",
+  "engines": { "node": ">=20.12" },
+  "scripts": {
+    "setup": "node setup.mjs",
+    "media": "node bot.mjs --list",
+    "dry": "node bot.mjs --dry-run",
+    "start": "node bot.mjs",
+    "test": "node --test test/e2e.test.mjs"
+  }
+}

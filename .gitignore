@@ -1,0 +1,22 @@
+# --- sekrety ---
+.env
+.env.*
+!.env.example
+
+# --- dane lokalne i osobowe: każde konto ma własne pliki (config.<konto>.json, recipe.<konto>.txt, state.<konto>.json) ---
+config.json
+config.*.json
+!config.example.json
+recipe.txt
+recipe.*.txt
+!recipe.example.txt
+state*.json
+logs/
+
+# --- reszta ---
+node_modules/
+.DS_Store
+.claude/
+*.bak
+allchat*
+*.gpg
